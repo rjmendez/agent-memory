@@ -217,5 +217,94 @@ def get_key_facts(key_prefix: Optional[str] = None) -> str:
             return json.dumps(result, indent=2)
 
 
+@mcp.tool()
+def validate() -> str:
+    """
+    Run a self-test of all MCP tools against the live database.
+    Use this to verify the MCP server is healthy after changes or restarts.
+    Returns a pass/fail report for each tool.
+    """
+    results = {}
+    sentinel_title = "__mcp_validate_sentinel__"
+
+    # 1. get_tasks
+    try:
+        data = json.loads(get_tasks())
+        assert isinstance(data, list)
+        results["get_tasks"] = f"PASS ({len(data)} tasks)"
+    except Exception as e:
+        results["get_tasks"] = f"FAIL: {e}"
+
+    # 2. search_memories
+    try:
+        data = json.loads(search_memories("mcp"))
+        assert isinstance(data, list)
+        results["search_memories"] = f"PASS ({len(data)} results)"
+    except Exception as e:
+        results["search_memories"] = f"FAIL: {e}"
+
+    # 3. add_memory (write sentinel)
+    try:
+        data = json.loads(add_memory(
+            title=sentinel_title,
+            content="Validation sentinel — safe to delete",
+            memory_type="note",
+            importance=1,
+            tags="validation,test"
+        ))
+        assert "created" in data
+        sentinel_id = data["created"]
+        results["add_memory"] = f"PASS (id={sentinel_id})"
+    except Exception as e:
+        sentinel_id = None
+        results["add_memory"] = f"FAIL: {e}"
+
+    # 4. update_task (no-op update on first task, just verify it runs)
+    try:
+        tasks = json.loads(get_tasks())
+        if tasks:
+            data = json.loads(update_task(
+                title=tasks[0]["title"],
+                result_summary=tasks[0].get("result_summary", "")
+            ))
+            assert data.get("updated", 0) >= 1
+            results["update_task"] = f"PASS (updated={data['updated']})"
+        else:
+            results["update_task"] = "SKIP (no tasks in DB)"
+    except Exception as e:
+        results["update_task"] = f"FAIL: {e}"
+
+    # 5. get_findings
+    try:
+        data = json.loads(get_findings())
+        assert isinstance(data, list)
+        results["get_findings"] = f"PASS ({len(data)} findings)"
+    except Exception as e:
+        results["get_findings"] = f"FAIL: {e}"
+
+    # 6. get_key_facts
+    try:
+        data = json.loads(get_key_facts())
+        assert isinstance(data, list)
+        results["get_key_facts"] = f"PASS ({len(data)} facts)"
+    except Exception as e:
+        results["get_key_facts"] = f"FAIL: {e}"
+
+    # Cleanup sentinel
+    if sentinel_id:
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM memories WHERE id = %s", (sentinel_id,))
+                    conn.commit()
+        except Exception:
+            pass  # Non-fatal
+
+    passed = sum(1 for v in results.values() if v.startswith("PASS"))
+    total = len(results)
+    summary = f"{passed}/{total} tools passing"
+    return json.dumps({"summary": summary, "tools": results}, indent=2)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
