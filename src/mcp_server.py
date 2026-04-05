@@ -111,7 +111,7 @@ def search_memories(query: str, limit: int = 10) -> str:
                 SELECT m.title, m.type, m.content, m.tags, m.importance, m.created_at
                 FROM memories m
                 JOIN full_text_search fts ON fts.memory_id = m.id
-                WHERE fts.search_vector @@ plainto_tsquery('english', %s)
+                WHERE to_tsvector('english', fts.content) @@ plainto_tsquery('english', %s)
                    OR m.title ILIKE %s
                    OR m.content ILIKE %s
                 ORDER BY m.importance DESC, m.created_at DESC
@@ -132,8 +132,9 @@ def search_memories(query: str, limit: int = 10) -> str:
 def add_memory(title: str, content: str, memory_type: str = "note",
                importance: int = 3, tags: Optional[str] = None) -> str:
     """
-    Add a new memory to mrpink_memory. memory_type: note, decision, lesson,
-    credential, todo, finding. importance: 1-5. tags: comma-separated string.
+    Add a new memory to mrpink_memory. memory_type must be one of:
+    note, decision, lesson, finding, todo, context, contact, workflow.
+    importance: 1-5. tags: comma-separated string.
     """
     tag_list = [t.strip() for t in tags.split(",")] if tags else []
     with get_conn() as conn:
@@ -197,8 +198,7 @@ def get_key_facts(key_prefix: Optional[str] = None) -> str:
             query = """
                 SELECT title, content, tags, importance, created_at
                 FROM memories
-                WHERE type != 'credential'
-                  AND archived = false
+                WHERE archived = false
             """
             params = []
             if key_prefix:
