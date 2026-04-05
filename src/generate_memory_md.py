@@ -76,40 +76,28 @@ STATIC_SECTION = """\
 | User | mrpink |
 | Password | MrPink-Memory-Secure-2026 |
 
-**Quick access (shell):**
+### ✅ USE MCP FIRST — Always
+
+The `mrpink-memory` MCP server is registered. **Use it. Do not reach for shell or Python client.**
+
 ```bash
-docker exec -it mrpink-memory psql -U mrpink -d mrpink_memory
+# Tasks
+mcporter call mrpink-memory.get_tasks
+mcporter call mrpink-memory.get_tasks --args '{"status": "pending"}'
+mcporter call mrpink-memory.update_task --args '{"title": "Task Name", "status": "done"}'
+
+# Memories
+mcporter call mrpink-memory.search_memories --args '{"query": "wireguard"}'
+mcporter call mrpink-memory.add_memory --args '{"title": "T", "content": "...", "memory_type": "note", "importance": 4, "tags": "t1,t2"}'
+
+# Facts + Findings
+mcporter call mrpink-memory.get_key_facts --args '{"key_prefix": "agent:"}'
+mcporter call mrpink-memory.get_findings
 ```
 
-**Quick access (Python):**
-```python
-import sys; sys.path.insert(0, '/home/rjmendez/development/agent-memory/src')
-from mrpink_memory_client import MrPinkMemory
-db = MrPinkMemory()
-
-# Search memories
-db.search_memories("matrix")
-
-# Add a memory
-from mrpink_memory_client import MemoryType
-db.add_memory("Title", "Content here", MemoryType.NOTE, importance=4, tags=["tag1"])
-
-# Add a finding
-from mrpink_memory_client import FindingSeverity
-db.add_finding("ProgramName", "Finding Title", "Description", FindingSeverity.HIGH)
-
-# Get active tasks
-import psycopg2, psycopg2.extras
-conn = psycopg2.connect(host='localhost', port=5433, database='mrpink_memory', user='mrpink', password='MrPink-Memory-Secure-2026')
-with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-    cur.execute("SELECT title, status, owner, priority FROM tasks WHERE status NOT IN ('done','cancelled') ORDER BY priority DESC")
-    print(cur.fetchall())
-```
-
-**Session memory loader (structured startup context):**
-```bash
-cd /home/rjmendez/development/agent-memory/src && python3 session_memory_loader.py
-```
+**Fallback order (MCP unavailable only):**
+1. Python client: `from mrpink_memory_client import MrPinkMemory; db = MrPinkMemory()`
+2. Shell (break-glass): `docker exec -it mrpink-memory psql -U mrpink -d mrpink_memory`
 
 **Re-generate this file from DB:**
 ```bash
@@ -194,7 +182,7 @@ def fetch_dynamic_sections(conn):
     creds = cur.fetchall()
     if creds:
         lines = ["## Credentials (References Only)\n",
-                 "_Values stored in DB — use `docker exec mrpink-memory psql ...` to retrieve._\n"]
+                 "_Values stored in DB — retrieve via `mcporter call mrpink-memory.get_key_facts`._\n"]
         for c in creds:
             lines.append(f"- `{c['key']}` — source: {c['source']}")
         sections.append('\n'.join(lines))
