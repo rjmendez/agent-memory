@@ -191,30 +191,46 @@ def get_findings(program: Optional[str] = None, severity: Optional[str] = None,
 def get_key_facts(key_prefix: Optional[str] = None) -> str:
     """
     Get key facts stored in mrpink_memory. Optionally filter by key prefix
-    (e.g. 'infra:', 'agent:', 'legal:'). Does NOT return encrypted credential values.
+    (e.g. 'infra:', 'agent:', 'legal:'). Does NOT return credential/secret values.
     """
     with get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             query = """
-                SELECT title, content, tags, importance, created_at
-                FROM memories
-                WHERE archived = false
+                SELECT key, type, value, source
+                FROM facts
+                WHERE type NOT IN ('credential', 'secret')
+                AND (expires_at IS NULL OR expires_at > NOW())
             """
             params = []
             if key_prefix:
-                query += " AND (title ILIKE %s OR content ILIKE %s)"
-                params.extend([f"{key_prefix}%", f"%{key_prefix}%"])
-            query += " ORDER BY importance DESC, created_at DESC LIMIT 50"
+                query += " AND key ILIKE %s"
+                params.append(f"{key_prefix}%")
+            query += " ORDER BY type, key LIMIT 100"
             cur.execute(query, params)
             rows = cur.fetchall()
-            result = []
-            for row in rows:
-                r = dict(row)
-                for k, v in r.items():
-                    if isinstance(v, datetime):
-                        r[k] = v.isoformat()
-                result.append(r)
-            return json.dumps(result, indent=2)
+            return json.dumps([dict(r) for r in rows], indent=2)
+
+
+@mcp.tool()
+def set_fact(key: str, value: str, fact_type: str = "text", source: str = "agent") -> str:
+    """
+    Store or update a key fact in mrpink_memory. Use for non-secret config, IPs,
+    agent metadata, etc. fact_type: text, ip, url, date, json.
+    For secrets/credentials use the vault (mrpink-vault), not this tool.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO facts (key, value, type, source)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (key) DO UPDATE
+                  SET value = EXCLUDED.value,
+                      source = EXCLUDED.source
+                RETURNING key
+            """, (key, value, fact_type, source))
+            conn.commit()
+            row = cur.fetchone()
+            return json.dumps({"set": row[0], "type": fact_type})
 
 
 @mcp.tool()
