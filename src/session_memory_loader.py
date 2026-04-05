@@ -5,6 +5,7 @@ Called at session startup to populate memory with relevant facts.
 Returns structured JSON for agent initialization.
 """
 
+import subprocess
 import psycopg2
 import psycopg2.extras
 import json
@@ -111,14 +112,33 @@ def load_session_memory():
                 AND expires_at IS NULL OR expires_at > NOW()
             """)
             memory['vault_paths'] = {row['key']: f"vault:{row['source']}" for row in cur.fetchall()}
-        
+
         conn.close()
-        
+
+        # 8. KNOWN REPOS (from GitHub — prevents re-creating existing repos)
+        memory['known_repos'] = _fetch_known_repos()
+
         return memory
     
     except Exception as e:
         print(f"Error loading session memory: {e}")
         raise
+
+
+def _fetch_known_repos() -> list:
+    """Fetch rjmendez GitHub repos so the agent knows what already exists."""
+    try:
+        result = subprocess.run(
+            ['gh', 'repo', 'list', 'rjmendez', '--limit', '100',
+             '--json', 'name,description,updatedAt'],
+            capture_output=True, text=True, timeout=15
+        )
+        repos = json.loads(result.stdout or '[]')
+        return [{'name': r['name'], 'description': r.get('description', ''),
+                 'updated': r.get('updatedAt', '')[:10]} for r in repos]
+    except Exception:
+        return []  # Non-fatal — gh CLI may not be available
+
 
 def format_for_display(memory):
     """Format loaded memory for human-readable output."""
@@ -148,6 +168,13 @@ def format_for_display(memory):
     
     if memory['critical_facts']:
         lines.append(f"\n🔐 CRITICAL FACTS ({len(memory['critical_facts'])} stored in Vault)")
+
+    if memory.get('known_repos'):
+        lines.append(f"\n🐙 KNOWN REPOS ({len(memory['known_repos'])} in rjmendez/):")
+        for r in memory['known_repos']:
+            desc = f" — {r['description']}" if r['description'] else ''
+            lines.append(f"  • {r['name']}{desc}")
+        lines.append(f"  ⚠️  Check this list before creating any new repo.")
     
     return '\n'.join(lines)
 
