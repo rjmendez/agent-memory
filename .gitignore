@@ -1,0 +1,14 @@
+# Ignore patterns
+
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+.env
+*.db
+*.sqlite
+.DS_Store
