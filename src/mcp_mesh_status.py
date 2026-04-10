@@ -197,7 +197,14 @@ def mesh_summary() -> str:
     and known agent reachability. One-call diagnostic for heartbeat checks.
     Use this instead of running multiple individual checks.
     """
-    import urllib.request, urllib.error
+    import urllib.request
+
+    def _http_ok(url: str, timeout: int = 3) -> bool:
+        try:
+            with urllib.request.urlopen(url, timeout=timeout):
+                return True
+        except Exception:
+            return False
 
     results = {}
 
@@ -213,25 +220,28 @@ def mesh_summary() -> str:
     _, port_out, _ = _run(["ss", "-tlnp"])
     results["openclaw_gateway"] = "18789" in port_out
 
-    # Synapse
-    try:
-        with urllib.request.urlopen("http://localhost:8008/_matrix/client/versions", timeout=3) as resp:
-            results["synapse"] = "healthy"
-    except Exception:
-        results["synapse"] = "unreachable"
+    # Synapse checks (local + Oxalis NodePort fallback to reduce false negatives)
+    synapse_candidates = [
+        "http://localhost:8008/_matrix/client/versions",           # local synapse (if running on MrPink)
+        "http://100.73.200.19:30808/_matrix/client/versions",      # Oxalis k3s NodePort
+    ]
+    synapse_ok = any(_http_ok(url, timeout=4) for url in synapse_candidates)
+    results["synapse"] = "healthy" if synapse_ok else "unreachable"
 
-    # Known agent A2A endpoints (Tailscale, non-blocking)
+    # Known agent endpoints (use /health or agent-card, not /a2a/.well-known/*)
     agents = {
-        "mrpink": "http://100.115.69.88:8200/a2a",
-        "charlie": "http://100.95.177.44:8200/a2a",
+        "mrpink": [
+            "http://100.115.69.88:8200/health",
+            "http://100.115.69.88:8200/.well-known/agent-card.json",
+        ],
+        "charlie": [
+            "http://100.95.177.44:8200/health",
+            "http://100.95.177.44:8200/.well-known/agent-card.json",
+        ],
     }
     results["agents"] = {}
-    for agent, url in agents.items():
-        try:
-            with urllib.request.urlopen(url + "/.well-known/agent.json", timeout=3) as r:
-                results["agents"][agent] = "reachable"
-        except Exception:
-            results["agents"][agent] = "unreachable"
+    for agent, urls in agents.items():
+        results["agents"][agent] = "reachable" if any(_http_ok(u, timeout=3) for u in urls) else "unreachable"
 
     return json.dumps(results, indent=2)
 
